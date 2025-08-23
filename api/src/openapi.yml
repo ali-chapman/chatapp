@@ -1,0 +1,880 @@
+openapi: 3.0.3
+info:
+  title: Offline-First Chat Application API
+  description: REST API for an offline-first chat application with event-based synchronization and configurable conflict resolution
+  version: 1.0.0
+
+servers:
+  - url: https://api.chatapp.com/v1
+    description: Production server
+
+paths:
+  # Chat Groups
+  /groups:
+    get:
+      summary: Get all available chat groups
+      tags: [Groups]
+      responses:
+        '200':
+          description: List of available chat groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatGroup'
+                  syncTimestamp:
+                    type: string
+                    format: date-time
+    post:
+      summary: Create a new chat group
+      tags: [Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                description:
+                  type: string
+                  maxLength: 500
+                localId:
+                  type: string
+                  description: Client-generated temporary ID for optimistic updates
+              required: [name]
+      responses:
+        '201':
+          description: Group created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatGroup'
+        '409':
+          description: Group name already exists
+
+  /groups/{groupId}:
+    get:
+      summary: Get a specific chat group
+      tags: [Groups]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatGroup'
+        '404':
+          description: Group not found
+    
+    put:
+      summary: Update a chat group
+      tags: [Groups]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                description:
+                  type: string
+                  maxLength: 500
+              required: [name]
+      responses:
+        '200':
+          description: Group updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatGroup'
+        '403':
+          description: Only group creator can update the group
+        '404':
+          description: Group not found
+    
+    delete:
+      summary: Delete a chat group
+      tags: [Groups]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Group deleted successfully
+        '403':
+          description: Only group creator can delete the group
+        '404':
+          description: Group not found
+
+  # Group Membership
+  /groups/{groupId}/members:
+    get:
+      summary: Get current members of a group
+      tags: [Membership]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current group members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupMember'
+                  syncTimestamp:
+                    type: string
+                    format: date-time
+
+    post:
+      summary: Join a group
+      tags: [Membership]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                localId:
+                  type: string
+                  description: Client-generated temporary ID for optimistic updates
+      responses:
+        '201':
+          description: Successfully joined group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MembershipEvent'
+        '409':
+          description: Already a member of this group
+
+  /groups/{groupId}/members/{userId}:
+    delete:
+      summary: Remove a user from group (leave or remove)
+      tags: [Membership]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Successfully left/removed from group
+        '404':
+          description: User not in group
+
+  # Membership Event Synchronization
+  /sync/membershipEvents:
+    post:
+      summary: Synchronize membership events (offline-first sync)
+      tags: [Synchronization]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                events:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PendingMembershipEvent'
+                lastSyncTimestamp:
+                  type: string
+                  format: date-time
+                  description: Client's last successful sync timestamp
+              required: [events, last_sync_timestamp]
+      responses:
+        '200':
+          description: Sync completed with conflict resolution
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conflictsResolved:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ResolvedConflict'
+                  serverEvents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MembershipEvent'
+                  syncTimestamp:
+                    type: string
+                    format: date-time
+                  acceptedEvents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        localId:
+                          type: string
+                        serverId:
+                          type: string
+                          format: uuid
+
+  /groups/{groupId}/membershipEvents:
+    get:
+      summary: Get membership events for a specific group since timestamp
+      tags: [Synchronization]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: since
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Get events since this timestamp
+      responses:
+        '200':
+          description: Membership events since specified time
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MembershipEvent'
+                  syncTimestamp:
+                    type: string
+                    format: date-time
+
+  # Messages
+  /groups/{groupId}/messages:
+    get:
+      summary: Get messages for a group
+      tags: [Messages]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Get messages since this timestamp
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        '200':
+          description: Messages in the group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  syncTimestamp:
+                    type: string
+                    format: date-time
+                  hasMore:
+                    type: boolean
+
+    post:
+      summary: Send a message to a group
+      tags: [Messages]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+                  maxLength: 4000
+                messageType:
+                  type: string
+                  enum: [text, system]
+                  default: text
+                localId:
+                  type: string
+                  description: Client-generated temporary ID for optimistic updates
+              required: [content]
+      responses:
+        '201':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '403':
+          description: Not a member of this group
+
+  # Message Synchronization
+  /sync/messages:
+    post:
+      summary: Synchronize messages (offline-first sync)
+      tags: [Synchronization]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                messages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PendingMessage'
+                lastSyncTimestamp:
+                  type: string
+                  format: date-time
+              required: [messages, last_sync_timestamp]
+      responses:
+        '200':
+          description: Message sync completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conflictsResolved:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ResolvedConflict'
+                  serverMessages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  syncTimestamp:
+                    type: string
+                    format: date-time
+                  acceptedMessages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        localId:
+                          type: string
+                        serverId:
+                          type: string
+                          format: uuid
+
+  # Admin Endpoints
+  /admin/conflictPolicies:
+    get:
+      summary: Get all conflict resolution policies (admin only)
+      tags: [Admin]
+      responses:
+        '200':
+          description: List of conflict resolution policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConflictPolicy'
+
+    post:
+      summary: Create or update a conflict resolution policy (admin only)
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConflictPolicyInput'
+      responses:
+        '201':
+          description: Policy created/updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictPolicy'
+
+  /admin/conflictPolicies/{policyId}:
+    delete:
+      summary: Delete a conflict resolution policy (admin only)
+      tags: [Admin]
+      parameters:
+        - name: policyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Policy deleted successfully
+
+  # Users (basic endpoints for hardcoded users)
+  /users/me:
+    get:
+      summary: Get current user info
+      tags: [Users]
+      responses:
+        '200':
+          description: Current user information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /users:
+    get:
+      summary: Get all users (for adding to groups)
+      tags: [Users]
+      responses:
+        '200':
+          description: List of all users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+
+  /auth/register:
+    post:
+      summary: Create a new user account
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 50
+                displayName:
+                  type: string
+                  maxLength: 100
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+              required: [username, display_name, email, password]
+      responses:
+        '201':
+          description: Account created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  accessToken:
+                    type: string
+                  refreshToken:
+                    type: string
+        '409':
+          description: Username or email already exists
+
+  /auth/login:
+    post:
+      summary: Login with existing account
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+              required: [username, password]
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  accessToken:
+                    type: string
+                  refreshToken:
+                    type: string
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    AdminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Admin-level JWT token required
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        isAdmin:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    ChatGroup:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        entityType:
+          type: string
+          enum: [GROUP]
+        name:
+          type: string
+        description:
+          type: string
+        createdBy:
+          $ref: '#/components/schemas/User'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        isActive:
+          type: boolean
+
+    GroupMember:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        joinedAt:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        groupId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        content:
+          type: string
+        messageType:
+          type: string
+          enum: [text, system]
+        createdAt:
+          type: string
+          format: date-time
+        syncStatus:
+          type: string
+          enum: [synced, pending, failed]
+
+    PendingMessage:
+      type: object
+      properties:
+        localId:
+          type: string
+        groupId:
+          type: string
+          format: uuid
+        content:
+          type: string
+        messageType:
+          type: string
+          enum: [text, system]
+          default: text
+        createdAt:
+          type: string
+          format: date-time
+          description: Client timestamp when message was created
+      required: [local_id, group_id, content, created_at]
+
+    MembershipEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        groupId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [JOIN, LEAVE, REMOVE]
+        performedBy:
+          type: string
+          format: uuid
+          description: User who performed the action (for REMOVE actions)
+        timestamp:
+          type: string
+          format: date-time
+
+    PendingMembershipEvent:
+      type: object
+      properties:
+        localId:
+          type: string
+        groupId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [JOIN, LEAVE]
+        timestamp:
+          type: string
+          format: date-time
+          description: Client timestamp when action was performed
+      required: [local_id, group_id, action, timestamp]
+
+    ResolvedConflict:
+      type: object
+      properties:
+        conflictId:
+          type: string
+          format: uuid
+        conflictType:
+          type: string
+          enum:
+            [
+              SIMULTANEOUS_LEAVE_ADD,
+              DUPLICATE_JOIN,
+              DUPLICATE_LEAVE,
+              SEND_TO_LEFT_GROUP,
+              SEND_TO_DELETED_GROUP,
+              DUPLICATE_MESSAGE,
+              MESSAGE_ORDER_CONFLICT,
+            ]
+        resolutionApplied:
+          type: string
+          description: Name of the resolution strategy that was applied
+        userMessage:
+          type: string
+          description: Human-readable message to show to the user
+        resolvedState:
+          type: object
+          description: The final state after conflict resolution
+          additionalProperties: true
+
+    ConflictPolicy:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        policyName:
+          type: string
+        entityType:
+          type: string
+          enum: [MESSAGE, MEMBERSHIP, GROUP]
+        conflictType:
+          type: string
+        resolutionStrategy:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        isActive:
+          type: boolean
+        createdByAdminId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    ConflictPolicyInput:
+      type: object
+      properties:
+        policyName:
+          type: string
+          maxLength: 100
+        entityType:
+          type: string
+          enum: [MESSAGE, MEMBERSHIP, GROUP]
+        conflictType:
+          type: string
+          maxLength: 100
+        resolutionStrategy:
+          type: string
+          maxLength: 100
+        parameters:
+          type: object
+          additionalProperties: true
+        isActive:
+          type: boolean
+          default: true
+      required: [policy_name, entity_type, conflict_type, resolution_strategy]
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Conflict:
+      description: Conflict with current state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+tags:
+  - name: Groups
+    description: Chat group management
+  - name: Membership
+    description: Group membership operations
+  - name: Messages
+    description: Message operations
+  - name: Synchronization
+    description: Offline-first synchronization endpoints
+  - name: Admin
+    description: Administrative functions
+  - name: Users
+    description: User management
