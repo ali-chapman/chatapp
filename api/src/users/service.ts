@@ -34,6 +34,21 @@ export class UserService {
     return this.getUserFromRow(result.rows[0]);
   }
 
+  public async getUserByUsername(username: string): Promise<User | UserNotFoundError> {
+    const result = await pool.query(
+      `SELECT id, username, display_name, is_admin, created_at
+       FROM users
+       WHERE username = $1`,
+      [username]
+    );
+
+    if (result.rows.length === 0) {
+      return USER_NOT_FOUND;
+    }
+
+    return this.getUserFromRow(result.rows[0]);
+  }
+
   public async registerUser(
     registration: UserRegistration
   ): Promise<AuthResponse | UserAlreadyExistsError> {

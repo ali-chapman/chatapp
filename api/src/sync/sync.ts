@@ -15,6 +15,13 @@ export interface PendingMessage {
   createdAt: string;
 }
 
+export interface PendingGroup {
+  localId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+}
+
 export interface ResolvedConflict {
   conflictId: string;
   conflictType: string;
@@ -33,6 +40,11 @@ export interface MessageSyncRequest {
   lastSyncTimestamp: string;
 }
 
+export interface GroupSyncRequest {
+  groups: PendingGroup[];
+  lastSyncTimestamp: string;
+}
+
 export interface MembershipSyncResponse {
   conflictsResolved: ResolvedConflict[];
   serverEvents: any[];
@@ -45,4 +57,11 @@ export interface MessageSyncResponse {
   serverMessages: any[];
   syncTimestamp: string;
   acceptedMessages: Array<{ localId: string; serverId: string }>;
+}
+
+export interface GroupSyncResponse {
+  conflictsResolved: ResolvedConflict[];
+  serverGroups: any[];
+  syncTimestamp: string;
+  acceptedGroups: Array<{ localId: string; serverId: string }>;
 }

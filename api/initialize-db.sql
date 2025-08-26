@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS messages (
     message_type VARCHAR(10) DEFAULT 'text' CHECK (message_type IN ('text', 'system')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    server_received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     sync_status VARCHAR(10) DEFAULT 'synced' CHECK (sync_status IN ('pending', 'synced', 'failed')),
     local_id VARCHAR(255), -- For mapping client-side temporary IDs
     is_deleted BOOLEAN DEFAULT FALSE,
@@ -139,6 +140,7 @@ CREATE INDEX IF NOT EXISTS idx_membership_events_sync_status ON membership_event
 CREATE INDEX IF NOT EXISTS idx_messages_group_id ON messages(group_id);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_server_received_at ON messages(server_received_at);
 CREATE INDEX IF NOT EXISTS idx_messages_sync_status ON messages(sync_status);
 CREATE INDEX IF NOT EXISTS idx_messages_local_id ON messages(local_id);
 

@@ -32,7 +32,9 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
+    "@types/cors": "^2.8.19",
     "@types/pg": "^8.15.5",
+    "cors": "^2.8.5",
     "express-openapi-validator": "^5.5.8",
     "pg": "^8.16.3"
   }

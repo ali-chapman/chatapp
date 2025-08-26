@@ -1,5 +1,5 @@
 import { Entity } from '../entity';
-import { SyncStatus } from '../sync';
+import { SyncStatus } from '../sync/sync';
 import { User } from '../users/users';
 
 export type Message = Entity & {

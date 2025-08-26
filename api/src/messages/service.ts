@@ -7,13 +7,19 @@ export const UNAUTHORIZED: UnauthorizedError = 'UNAUTHORIZED';
 export type GroupNotFoundError = 'GROUP_NOT_FOUND';
 export const GROUP_NOT_FOUND: GroupNotFoundError = 'GROUP_NOT_FOUND';
 
+type MessagesResult = {
+  messages: Message[];
+  hasMore: boolean;
+  syncTimestamp: string;
+};
+
 export class MessageService {
   public async getMessagesForGroup(
     userId: string,
     groupId: string,
     since?: string,
     limit: number = 50
-  ): Promise<Message[] | UnauthorizedError | GroupNotFoundError> {
+  ): Promise<MessagesResult | UnauthorizedError | GroupNotFoundError> {
     const canAccess = await this.checkUserCanAccessGroup(userId, groupId);
     if (!canAccess) {
       return UNAUTHORIZED;
@@ -38,7 +44,7 @@ export class MessageService {
 
     if (since) {
       paramCount++;
-      query += ` AND m.created_at > $${paramCount}`;
+      query += ` AND m.server_received_at > $${paramCount}`;
       queryParams.push(since);
     }
 
@@ -49,7 +55,11 @@ export class MessageService {
     queryParams.push(limit);
 
     const result = await pool.query(query, queryParams);
-    return result.rows.map(this.getMessageFromRow);
+    return {
+      messages: result.rows.map(this.getMessageFromRow),
+      hasMore: result.rows.length === limit,
+      syncTimestamp: new Date().toISOString(),
+    };
   }
 
   public async createMessage(
@@ -71,11 +81,13 @@ export class MessageService {
 
     console.log('Creating new message');
     const result = await pool.query(
-      `INSERT INTO messages (group_id, user_id, content, message_type, local_id, sync_status)
-       VALUES ($1, $2, $3, 'text', $4, 'SYNCED')
+      `INSERT INTO messages (group_id, user_id, content, message_type, local_id, sync_status, server_received_at)
+       VALUES ($1, $2, $3, 'text', $4, 'synced', NOW())
        RETURNING *`,
       [groupId, userId, content.trim(), localId || null]
     );
+
+    console.log('Message rows returned:', result.rows);
 
     const messageRow = result.rows[0];
 
@@ -112,7 +124,7 @@ export class MessageService {
     const query = `
       SELECT 1
       FROM group_memberships
-      WHERE user_id = $1 AND group_id = $2
+      WHERE user_id = $1 AND group_id = $2 AND is_active = true
       LIMIT 1
     `;
     const values = [userId, groupId];

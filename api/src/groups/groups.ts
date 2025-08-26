@@ -1,6 +1,13 @@
 import { Entity } from '../entity';
-import { SyncStatus } from '../sync';
+import { SyncStatus } from '../sync/sync';
 import { User } from '../users/users';
+
+export interface GroupMember {
+  userId: string;
+  username: string;
+  displayName: string;
+  joinedAt: string;
+}
 
 export type Group = Entity & {
   entityType: 'GROUP';
@@ -10,6 +17,7 @@ export type Group = Entity & {
   createdBy: User;
   updatedAt: Date;
   isDeleted: boolean;
+  members: GroupMember[];
 };
 
 export type Membership = Entity & {
@@ -32,3 +40,4 @@ export interface MembershipEvent {
   syncStatus: SyncStatus;
   createdAt: Date;
 }
+

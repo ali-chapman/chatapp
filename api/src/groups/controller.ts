@@ -231,6 +231,7 @@ router.post(
   async (req: express.Request, res: express.Response): Promise<void> => {
     try {
       const { groupId } = req.params;
+      const { userId } = req.body;
       const currentUserId = getUserId(req);
 
       if (!groupId) {
@@ -242,33 +243,85 @@ router.post(
         return;
       }
 
-      console.log(`User ${currentUserId} joining group ${groupId}`);
-      const result = await groupService.joinGroup(currentUserId, groupId);
+      // If userId is provided in body, add that user to the group (admin action)
+      // Otherwise, current user is joining the group
+      if (userId) {
+        if (typeof userId !== 'string' || userId.trim().length === 0) {
+          res.status(400).json({
+            error: 'Bad Request',
+            message: 'userId must be a valid string',
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
 
-      if (result === GROUP_NOT_FOUND) {
-        res.status(404).json({
-          error: 'Group not found',
-          message: 'Group not found or has been deleted',
-          timestamp: new Date().toISOString(),
-        });
-        return;
+        console.log(
+          `User ${currentUserId} adding user ${userId} to group ${groupId}`
+        );
+        const result = await groupService.addUserToGroup(
+          currentUserId,
+          groupId,
+          userId
+        );
+
+        if (result === GROUP_NOT_FOUND) {
+          res.status(404).json({
+            error: 'Group not found',
+            message: 'Group not found or has been deleted',
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        if (result === UNAUTHORIZED) {
+          res.status(403).json({
+            error: 'Forbidden',
+            message: 'Only the group creator can add members to the group',
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        if (result === ALREADY_MEMBER) {
+          res.status(409).json({
+            error: 'Conflict',
+            message: 'User is already a member of this group',
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        res.status(201).json(result);
+      } else {
+        // Current user joining the group
+        console.log(`User ${currentUserId} joining group ${groupId}`);
+        const result = await groupService.joinGroup(currentUserId, groupId);
+
+        if (result === GROUP_NOT_FOUND) {
+          res.status(404).json({
+            error: 'Group not found',
+            message: 'Group not found or has been deleted',
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        if (result === ALREADY_MEMBER) {
+          res.status(409).json({
+            error: 'Conflict',
+            message: 'User is already a member of this group',
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        res.status(201).json(result);
       }
-
-      if (result === ALREADY_MEMBER) {
-        res.status(409).json({
-          error: 'Conflict',
-          message: 'User is already a member of this group',
-          timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      res.status(201).json(result);
     } catch (error) {
-      console.error('Error joining group:', error);
+      console.error('Error with group membership:', error);
       res.status(500).json({
         error: 'Internal Server Error',
-        message: 'Failed to join group',
+        message: 'Failed to update group membership',
         timestamp: new Date().toISOString(),
       });
     }
@@ -446,4 +499,3 @@ const getUserId = (req: express.Request): string =>
   '11111111-1111-1111-1111-111111111111';
 
 export default router;
-

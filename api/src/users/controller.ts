@@ -24,34 +24,32 @@ router.get('/users', async (_req: express.Request, res: express.Response) => {
   }
 });
 
-router.get(
-  '/users/me',
-  async (req: express.Request, res: express.Response) => {
-    try {
-      console.log('Fetching current user');
-      const currentUserId = getUserId(req);
 
-      const result = await userService.getCurrentUser(currentUserId);
+router.get('/users/me', async (req: express.Request, res: express.Response) => {
+  try {
+    console.log('Fetching current user');
+    const currentUserId = getUserId(req);
 
-      if (result === USER_NOT_FOUND) {
-        return res.status(404).json({
-          error: 'User not found',
-          message: 'Current user not found',
-          timestamp: new Date().toISOString(),
-        });
-      }
+    const result = await userService.getCurrentUser(currentUserId);
 
-      return res.json(result);
-    } catch (error) {
-      console.error('Error fetching current user:', error);
-      return res.status(500).json({
-        error: 'Internal Server Error',
-        message: 'Failed to fetch current user',
+    if (result === USER_NOT_FOUND) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'Current user not found',
         timestamp: new Date().toISOString(),
       });
     }
+
+    return res.json(result);
+  } catch (error) {
+    console.error('Error fetching current user:', error);
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Failed to fetch current user',
+      timestamp: new Date().toISOString(),
+    });
   }
-);
+});
 
 router.post(
   '/auth/register',
@@ -165,3 +163,4 @@ const getUserId = (req: express.Request): string =>
   '11111111-1111-1111-1111-111111111111';
 
 export default router;
+

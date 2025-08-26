@@ -1,7 +1,7 @@
 import pool from '../db';
 import { User } from '../users/users';
 import { Group, MembershipEvent } from './groups';
-import { SyncStatus } from '../sync';
+import { SyncStatus } from '../sync/sync';
 
 export type UnauthorizedError = 'UNAUTHORIZED';
 export const UNAUTHORIZED: UnauthorizedError = 'UNAUTHORIZED';
@@ -14,16 +14,21 @@ export const ALREADY_MEMBER: AlreadyMemberError = 'ALREADY_MEMBER';
 
 export class GroupService {
   public async getAllGroups(): Promise<Group[]> {
-    const result = await pool.query(`
-      SELECT g.id, g.name, g.description, g.created_at, g.updated_at, g.is_deleted,
-             u.id as creator_id, u.username as creator_username, u.display_name as creator_display_name
+    const result = await pool.query(
+      `
+      SELECT DISTINCT g.id, g.name, g.description, g.created_at, g.updated_at, g.is_deleted,
+             u.id as creator_id, u.username as creator_username, u.display_name as creator_display_name,
+             u.email as creator_email, u.is_admin as creator_is_admin, u.created_at as creator_created_at,
+             u.last_login_at as creator_last_login_at, u.updated_at as creator_updated_at
       FROM chat_groups g
       JOIN users u ON g.created_by = u.id
+      JOIN group_memberships gm ON g.id = gm.group_id
       WHERE g.is_deleted = false
       ORDER BY g.created_at DESC
-    `);
+    `
+    );
 
-    return result.rows.map(this.getGroupFromRow);
+    return Promise.all(result.rows.map(row => this.getGroupFromRow(row)));
   }
 
   public async createGroup(
@@ -31,34 +36,76 @@ export class GroupService {
     name: string,
     description?: string
   ): Promise<Group> {
-    const result = await pool.query(
-      `INSERT INTO chat_groups (name, description, created_by)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [name.trim(), description || '', userId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const groupRow = result.rows[0];
+      // Create the group
+      const groupResult = await client.query(
+        `INSERT INTO chat_groups (name, description, created_by)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [name.trim(), description || '', userId]
+      );
 
-    const userResult = await pool.query(
-      `SELECT id, username, display_name FROM users WHERE id = $1`,
-      [userId]
-    );
+      const groupRow = groupResult.rows[0];
 
-    return {
-      id: groupRow.id,
-      entityType: 'GROUP',
-      name: groupRow.name,
-      description: groupRow.description,
-      createdAt: groupRow.created_at,
-      createdBy: {
+      // Automatically add the creator as a member
+      await client.query(
+        `INSERT INTO group_memberships (user_id, group_id, joined_at, is_active)
+         VALUES ($1, $2, CURRENT_TIMESTAMP, true)`,
+        [userId, groupRow.id]
+      );
+
+      // Record the membership event
+      await client.query(
+        `INSERT INTO membership_events (user_id, group_id, action, performed_by, timestamp)
+         VALUES ($1, $2, 'JOIN', $1, CURRENT_TIMESTAMP)`,
+        [userId, groupRow.id]
+      );
+
+      await client.query('COMMIT');
+
+      const userResult = await pool.query(
+        `SELECT id, username, display_name, email, is_admin, created_at, last_login_at, updated_at FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      const creator: User = {
         id: userResult.rows[0].id,
         username: userResult.rows[0].username,
         displayName: userResult.rows[0].display_name,
-      } as User,
-      updatedAt: groupRow.updated_at,
-      isDeleted: groupRow.is_deleted,
-    };
+        email: userResult.rows[0].email,
+        isAdmin: userResult.rows[0].is_admin,
+        createdAt: userResult.rows[0].created_at,
+        lastLoginAt: userResult.rows[0].last_login_at,
+        updatedAt: userResult.rows[0].updated_at,
+      };
+
+      const member = {
+        userId: creator.id,
+        username: creator.username,
+        displayName: creator.displayName,
+        joinedAt: groupRow.created_at.toISOString(),
+      };
+
+      return {
+        id: groupRow.id,
+        entityType: 'GROUP',
+        name: groupRow.name,
+        description: groupRow.description,
+        createdAt: groupRow.created_at,
+        createdBy: creator,
+        updatedAt: groupRow.updated_at,
+        isDeleted: groupRow.is_deleted,
+        members: [member], // Creator is the only member initially
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async getGroupById(
@@ -66,7 +113,9 @@ export class GroupService {
   ): Promise<Group | GroupNotFoundError> {
     const result = await pool.query(
       `SELECT g.id, g.name, g.description, g.created_at, g.updated_at, g.is_deleted,
-             u.id as creator_id, u.username as creator_username, u.display_name as creator_display_name
+             u.id as creator_id, u.username as creator_username, u.display_name as creator_display_name,
+             u.email as creator_email, u.is_admin as creator_is_admin, u.created_at as creator_created_at,
+             u.last_login_at as creator_last_login_at, u.updated_at as creator_updated_at
       FROM chat_groups g
       JOIN users u ON g.created_by = u.id
       WHERE g.id = $1 AND g.is_deleted = false`,
@@ -77,7 +126,7 @@ export class GroupService {
       return GROUP_NOT_FOUND;
     }
 
-    return this.getGroupFromRow(result.rows[0]);
+    return await this.getGroupFromRow(result.rows[0]);
   }
 
   public async updateGroup(
@@ -110,24 +159,23 @@ export class GroupService {
     const groupRow = result.rows[0];
 
     const userResult = await pool.query(
-      `SELECT id, username, display_name FROM users WHERE id = $1`,
+      `SELECT id, username, display_name, email, is_admin, created_at, last_login_at, updated_at FROM users WHERE id = $1`,
       [groupRow.created_by]
     );
 
-    return {
-      id: groupRow.id,
-      entityType: 'GROUP',
-      name: groupRow.name,
-      description: groupRow.description,
-      createdAt: groupRow.created_at,
-      createdBy: {
-        id: userResult.rows[0].id,
-        username: userResult.rows[0].username,
-        displayName: userResult.rows[0].display_name,
-      } as User,
-      updatedAt: groupRow.updated_at,
-      isDeleted: groupRow.is_deleted,
+    const groupWithCreator = {
+      ...groupRow,
+      creator_id: userResult.rows[0].id,
+      creator_username: userResult.rows[0].username,
+      creator_display_name: userResult.rows[0].display_name,
+      creator_email: userResult.rows[0].email,
+      creator_is_admin: userResult.rows[0].is_admin,
+      creator_created_at: userResult.rows[0].created_at,
+      creator_last_login_at: userResult.rows[0].last_login_at,
+      creator_updated_at: userResult.rows[0].updated_at,
     };
+
+    return await this.getGroupFromRow(groupWithCreator);
   }
 
   public async deleteGroup(
@@ -182,6 +230,82 @@ export class GroupService {
       displayName: row.display_name,
       joinedAt: row.joined_at.toISOString(),
     }));
+  }
+
+  public async addUserToGroup(
+    currentUserId: string,
+    groupId: string,
+    userIdToAdd: string
+  ): Promise<
+    | MembershipEvent
+    | GroupNotFoundError
+    | AlreadyMemberError
+    | UnauthorizedError
+  > {
+    // Check if group exists and get creator info
+    const groupResult = await pool.query(
+      `SELECT created_by FROM chat_groups WHERE id = $1 AND is_deleted = false`,
+      [groupId]
+    );
+
+    if (groupResult.rows.length === 0) {
+      return GROUP_NOT_FOUND;
+    }
+
+    // Only group creator can add others to the group
+    const isGroupCreator = groupResult.rows[0].created_by === currentUserId;
+    if (!isGroupCreator) {
+      return UNAUTHORIZED;
+    }
+
+    // Check if user is already a member
+    const membershipResult = await pool.query(
+      `SELECT id FROM group_memberships 
+       WHERE user_id = $1 AND group_id = $2 AND is_active = true`,
+      [userIdToAdd, groupId]
+    );
+
+    if (membershipResult.rows.length > 0) {
+      return ALREADY_MEMBER;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(
+        `INSERT INTO group_memberships (user_id, group_id, joined_at, is_active)
+         VALUES ($1, $2, CURRENT_TIMESTAMP, true)
+         ON CONFLICT (user_id, group_id) 
+         DO UPDATE SET is_active = true, joined_at = CURRENT_TIMESTAMP, left_at = NULL`,
+        [userIdToAdd, groupId]
+      );
+
+      const eventResult = await client.query(
+        `INSERT INTO membership_events (user_id, group_id, action, performed_by, timestamp)
+         VALUES ($1, $2, 'JOIN', $3, CURRENT_TIMESTAMP)
+         RETURNING *`,
+        [userIdToAdd, groupId, currentUserId]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        id: eventResult.rows[0].id,
+        groupId: eventResult.rows[0].group_id,
+        userId: eventResult.rows[0].user_id,
+        action: eventResult.rows[0].action,
+        performedBy: { id: currentUserId } as User,
+        timestamp: eventResult.rows[0].timestamp,
+        syncStatus: 'SYNCED' as SyncStatus,
+        createdAt: eventResult.rows[0].created_at,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async joinGroup(
@@ -336,7 +460,7 @@ export class GroupService {
        FROM membership_events me
        JOIN users u1 ON me.user_id = u1.id
        JOIN users u2 ON me.performed_by = u2.id
-       WHERE me.group_id = $1 AND me.timestamp > $2
+       WHERE me.group_id = $1 AND me.timestamp > $2::timestamp
        ORDER BY me.timestamp ASC`,
       [groupId, new Date(since)]
     );
@@ -356,7 +480,24 @@ export class GroupService {
     }));
   }
 
-  private getGroupFromRow(row: any): Group {
+  private async getGroupFromRow(row: any): Promise<Group> {
+    // Fetch members for this group
+    const membersResult = await pool.query(
+      `SELECT gm.user_id, gm.joined_at, u.username, u.display_name
+       FROM group_memberships gm
+       JOIN users u ON gm.user_id = u.id
+       WHERE gm.group_id = $1 AND gm.is_active = true
+       ORDER BY gm.joined_at ASC`,
+      [row.id]
+    );
+
+    const members = membersResult.rows.map(memberRow => ({
+      userId: memberRow.user_id,
+      username: memberRow.username,
+      displayName: memberRow.display_name,
+      joinedAt: memberRow.joined_at.toISOString(),
+    }));
+
     return {
       id: row.id,
       entityType: 'GROUP',
@@ -367,10 +508,15 @@ export class GroupService {
         id: row.creator_id,
         username: row.creator_username,
         displayName: row.creator_display_name,
+        email: row.creator_email || '',
+        isAdmin: row.creator_is_admin || false,
+        createdAt: row.creator_created_at || row.created_at,
+        lastLoginAt: row.creator_last_login_at || row.created_at,
+        updatedAt: row.creator_updated_at || row.updated_at,
       } as User,
       updatedAt: row.updated_at,
       isDeleted: row.is_deleted,
+      members,
     };
   }
 }
-
