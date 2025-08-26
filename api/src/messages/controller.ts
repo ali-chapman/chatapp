@@ -90,7 +90,7 @@ router.post(
 
 const handleResult = <Result>(
   res: express.Response,
-  result: Result | 'UNAUTHORIZED' | 'GROUP_NOT_FOUND',
+  result: Result | 'UNAUTHORIZED' | 'NOT_FOUND',
   status: number = 200
 ) => {
   if (result === 'UNAUTHORIZED') {
@@ -102,7 +102,7 @@ const handleResult = <Result>(
     return;
   }
 
-  if (result === 'GROUP_NOT_FOUND') {
+  if (result === 'NOT_FOUND') {
     res.status(404).json({
       error: 'Group not found',
       message: 'Group not found or has been deleted',

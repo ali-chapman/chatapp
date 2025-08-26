@@ -1,11 +1,7 @@
 import pool from '../db';
+import { NOT_FOUND, NotFoundError } from '../errors';
 import { User } from '../users/users';
 import { Message } from './messages';
-
-export type UnauthorizedError = 'UNAUTHORIZED';
-export const UNAUTHORIZED: UnauthorizedError = 'UNAUTHORIZED';
-export type GroupNotFoundError = 'GROUP_NOT_FOUND';
-export const GROUP_NOT_FOUND: GroupNotFoundError = 'GROUP_NOT_FOUND';
 
 type MessagesResult = {
   messages: Message[];
@@ -19,15 +15,15 @@ export class MessageService {
     groupId: string,
     since?: string,
     limit: number = 50
-  ): Promise<MessagesResult | UnauthorizedError | GroupNotFoundError> {
+  ): Promise<MessagesResult | NotFoundError> {
     const canAccess = await this.checkUserCanAccessGroup(userId, groupId);
     if (!canAccess) {
-      return UNAUTHORIZED;
+      return NOT_FOUND;
     }
 
     const groupExists = await this.checkGroupExists(groupId);
     if (!groupExists) {
-      return GROUP_NOT_FOUND;
+      return NOT_FOUND;
     }
 
     let query = `
@@ -67,16 +63,16 @@ export class MessageService {
     groupId: string,
     content: string,
     localId: string
-  ): Promise<Message | UnauthorizedError | GroupNotFoundError> {
+  ): Promise<Message | NotFoundError> {
     const canAccess = await this.checkUserCanAccessGroup(userId, groupId);
     if (!canAccess) {
-      return UNAUTHORIZED;
+      return NOT_FOUND;
     }
 
     const groupExists = await this.checkGroupExists(groupId);
 
     if (!groupExists) {
-      return GROUP_NOT_FOUND;
+      return NOT_FOUND;
     }
 
     console.log('Creating new message');

@@ -201,7 +201,7 @@ export class SyncService {
   private async syncPendingMessages() {
     const groups = await db.getGroups();
     const currentUser = await db.getCurrentUser();
-    const userGroups = groups.filter(g => g.members.some(m => m.userId === currentUser?.id));
+    const userGroups = groups.filter(g => g.members?.some(m => m.userId === currentUser?.id));
 
     for (const group of userGroups) {
       const groupData = await db.getGroupData(group.id);

@@ -252,3 +252,8 @@ export async function removePendingMembershipEvents(localIds: string[]): Promise
 
   await tx.done;
 }
+
+export async function removeGroupById(groupId: string): Promise<void> {
+  const database = await initDatabase();
+  await database.delete('groups', groupId);
+}

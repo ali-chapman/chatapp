@@ -123,8 +123,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
       const { localId, group } = action.payload;
 
       // Find and replace the group with the matching localId
+      // Handle case where group.id might be the localId for newly created groups
       const updatedGroups = state.groups.map(g =>
-        g.localId === localId ? group : g
+        g.localId === localId || g.id === localId ? group : g
       );
 
       return {
@@ -271,30 +272,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadGroupData = async (groupId: string) => {
     try {
-      // Check if user is a member before loading messages
-      if (!isUserMember(groupId)) {
-        console.log('User is not a member of group', groupId, 'skipping message loading');
-        // Still load basic group data structure but without messages
-        const groupData: GroupData = {
-          group: state.groups.find(g => g.id === groupId)!,
-          messages: [],
-          members: [],
-          syncState: {
-            lastSyncTimestamp: '1970-01-01T00:00:00.000Z',
-            pendingMessages: [],
-            pendingMembershipEvents: [],
-          }
-        };
-        dispatch({ type: 'SET_GROUP_DATA', payload: { groupId, data: groupData } });
-        return;
-      }
-
       let groupData = await db.getGroupData(groupId);
 
       if (!groupData) return;
 
-      console.log('Loaded group data from DB:', groupId, groupData);
       dispatch({ type: 'SET_GROUP_DATA', payload: { groupId, data: groupData } });
+
+      // Check if user is a member after loading data from database
+      const isUserGroupMember = groupData.members.some(member => member.userId === state.user?.id);
+      if (!isUserGroupMember) {
+        console.log('User is not a member of group', groupId, 'limiting data access');
+        // Update group data to show empty messages since user is not a member
+        const limitedGroupData: GroupData = {
+          ...groupData,
+          messages: [],
+        };
+        dispatch({ type: 'SET_GROUP_DATA', payload: { groupId, data: limitedGroupData } });
+      }
 
       if (state.isOnline) {
         try {
@@ -375,7 +369,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const isUserMember = (groupId: string): boolean => {
     const group = state.groups.find(g => g.id === groupId);
     if (!group || !state.user) return false;
-    return group.members.some(member => member.userId === state.user!.id);
+    return group.members?.some(member => member.userId === state.user!.id);
   };
 
   const joinGroup = async (groupId: string) => {
@@ -479,14 +473,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (state.isOnline) {
       try {
         const serverGroup = await api.createGroup(name, description, localId);
-        const syncedGroup = { ...serverGroup, syncStatus: 'synced' as const };
+        const syncedGroup = {
+          ...serverGroup,
+          syncStatus: 'synced' as const,
+          localId // Preserve the localId for tracking purposes
+        };
 
         // Update the group with server data
         dispatch({ type: 'UPDATE_GROUP', payload: { localId, group: syncedGroup } });
 
+        // If this group is currently active, update the active group ID to use the server ID
+        if (state.activeGroupId === localId) {
+          dispatch({ type: 'SET_ACTIVE_GROUP', payload: syncedGroup.id });
+        }
+
         // Remove from pending groups and store as synced
         await db.removePendingGroups([localId]);
-        const updatedGroups = state.groups.map(g => g.localId === localId ? syncedGroup : g);
+
+        // Remove the old group with localId as key from database
+        await db.removeGroupById(localId);
+
+        // Store the updated group with server ID
+        const updatedGroups = state.groups.map(g =>
+          g.localId === localId || g.id === localId ? syncedGroup : g
+        );
         await db.storeGroups(updatedGroups);
 
 
@@ -527,6 +537,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Listen for sync completion events - use ref to access current state
     const handleSyncComplete = async (groupId: string) => {
       console.log('Sync completed for group:', groupId);
+
+      // Refresh the groups list to get any ID updates from sync
+      const updatedGroups = await db.getGroups();
+      dispatch({ type: 'SET_GROUPS', payload: updatedGroups });
+
+      // If the active group was updated (local ID -> server ID), update the active group ID
+      const currentActiveGroup = state.groups.find(g => g.id === state.activeGroupId || g.localId === state.activeGroupId);
+      if (currentActiveGroup && currentActiveGroup.localId === state.activeGroupId) {
+        const updatedActiveGroup = updatedGroups.find(g => g.localId === currentActiveGroup.localId);
+        if (updatedActiveGroup && updatedActiveGroup.id !== state.activeGroupId) {
+          dispatch({ type: 'SET_ACTIVE_GROUP', payload: updatedActiveGroup.id });
+        }
+      }
+
       // Always refresh group data if it's loaded
       const updatedGroupData = await db.getGroupData(groupId);
       if (updatedGroupData) {
