@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
@@ -14,11 +14,8 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Copy OpenAPI spec to dist directory
-RUN cp src/openapi.yml dist/
-
 # Expose port
-EXPOSE 3000
+EXPOSE 5173
 
 # Start the application
-CMD ["node", "dist/server.js"]
+CMD ["npm", "run", "preview"]

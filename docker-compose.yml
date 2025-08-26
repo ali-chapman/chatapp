@@ -11,7 +11,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./initialize-db.sql:/docker-entrypoint-initdb.d/initialize-db.sql
+      - ./api/initialize-db.sql:/docker-entrypoint-initdb.d/initialize-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chatapp -d chatapp"]
       interval: 5s
@@ -19,7 +19,7 @@ services:
       retries: 5
 
   api:
-    build: .
+    build: ./api
     ports:
       - "3000:3000"
     depends_on:
@@ -28,10 +28,19 @@ services:
     environment:
       - NODE_ENV=development
       - DATABASE_URL=postgresql://chatapp:chatapp_password@postgres:5432/chatapp
-    volumes:
-      - .:/app
-      - /app/node_modules
-    command: npm run dev
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=chatapp
+      - DB_USER=chatapp
+      - DB_PASSWORD=chatapp_password
+    command: npm start
+
+  ui:
+    build: ./ui
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:
